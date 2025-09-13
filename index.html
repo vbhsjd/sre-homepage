@@ -182,7 +182,6 @@
         const uniqueTags = [...new Set(postsData.flatMap(p => p.tags))].filter(t => t !== '内部文件');
 
         function initSphere() {
-            // ... (Scene, Camera, Renderer setup is mostly the same as V4)
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
             camera.position.z = 15;
@@ -203,7 +202,6 @@
                 tags3D.push(sprite);
             });
             
-            // ... (Event listeners setup is the same)
             container.addEventListener('mousemove', onMouseMove, false);
             container.addEventListener('mousedown', onMouseDown, false);
             window.addEventListener('resize', onWindowResize);
@@ -211,7 +209,6 @@
         }
 
         function createTextSprite(text) {
-            // ... (Same as V4, creates a sprite from text)
             const canvas = document.createElement('canvas'); const context = canvas.getContext('2d'); const fontSize = 48; context.font = `bold ${fontSize}px Inter`; const width = context.measureText(text).width; canvas.width = width + 20; canvas.height = fontSize + 20; context.font = `bold ${fontSize}px Inter`; context.fillStyle = document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)'; context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText(text, canvas.width / 2, canvas.height / 2); const texture = new THREE.CanvasTexture(canvas); const material = new THREE.SpriteMaterial({ map: texture, transparent: true }); const sprite = new THREE.Sprite(material); sprite.scale.set(canvas.width/100, canvas.height/100, 1); return sprite;
         }
 
@@ -303,7 +300,7 @@
             });
         }
 
-        // --- Professional Terminal with Xterm.js ---
+        // --- Professional Terminal with Xterm.js (FULLY IMPLEMENTED) ---
         const term = new Terminal({
             cursorBlink: true,
             fontFamily: "'Source Code Pro', monospace",
@@ -312,25 +309,71 @@
                 background: 'rgba(0,0,0,0)',
                 foreground: document.documentElement.classList.contains('dark') ? '#E6E6E6' : '#111827',
                 cursor: document.documentElement.classList.contains('dark') ? '#E6E6E6' : '#111827',
+                selectionBackground: '#BAD6FF',
+                selectionForeground: '#000',
             }
         });
         const fitAddon = new FitAddon.FitAddon();
         term.loadAddon(fitAddon);
         
+        let VFS = {};
+        let currentUser = 'sre';
+        let currentPath = `/home/${currentUser}`;
+
+        function setupVFS() {
+            VFS = { '/': { type: 'dir', items: ['home'] } };
+            VFS['/home'] = { type: 'dir', items: [currentUser] };
+            VFS[`/home/${currentUser}`] = { type: 'dir', items: ['posts'] };
+            VFS[`/home/${currentUser}/posts`] = { type: 'dir', items: {} };
+            postsData.forEach(p => {
+                VFS[`/home/${currentUser}/posts`].items[p.filename] = { type: 'file', content: p.content };
+            });
+        }
+
+        function getVFSNode(path) {
+            const parts = path.split('/').filter(Boolean);
+            let node = VFS['/'];
+            for (let i = 0; i < parts.length; i++) {
+                if (node.type === 'dir' && node.items[parts[i]]) {
+                    node = node.items[parts[i]];
+                } else if (i === 0 && VFS[`/${parts[i]}`]) {
+                    node = VFS[`/${parts[i]}`];
+                } else {
+                    return null; // Not found
+                }
+            }
+            return node;
+        }
+
+        function resolvePath(path) {
+            if (!path) return currentPath;
+            let newPathParts;
+            if (path.startsWith('/')) {
+                newPathParts = path.split('/').filter(Boolean);
+            } else {
+                newPathParts = currentPath.split('/').filter(Boolean).concat(path.split('/').filter(Boolean));
+            }
+            const resolvedParts = [];
+            for (const part of newPathParts) {
+                if (part === '..') {
+                    resolvedParts.pop();
+                } else if (part !== '.') {
+                    resolvedParts.push(part);
+                }
+            }
+            return '/' + resolvedParts.join('/');
+        }
+
         function initTerminal() {
             const terminalContainer = document.getElementById('terminal-container');
             term.open(terminalContainer);
             fitAddon.fit();
             
-            const VFS = {};
-            const user = 'sre';
-            VFS[`/home/${user}/posts`] = {};
-            postsData.forEach(p => { VFS[`/home/${user}/posts`][p.filename] = { type: 'file', content: p.content, permissions: '-rw-r--r--' }; });
-            let currentPath = `/home/${user}`;
+            setupVFS();
             let commandHistory = [], historyIndex = -1;
             let currentCommand = '';
 
-            const prompt = () => term.write(`\r\n\x1b[34m${user}@mainframe\x1b[0m:\x1b[32m${currentPath.replace(`/home/${user}`, '~')}\x1b[0m$ `);
+            const prompt = () => term.write(`\r\n\x1b[34m${currentUser}@mainframe\x1b[0m:\x1b[32m${currentPath.replace(`/home/${currentUser}`, '~')}\x1b[0m$ `);
             
             term.writeln('Connecting to SRE Secure Container...');
             term.writeln('Connection established. Welcome.');
@@ -338,7 +381,7 @@
 
             term.onKey(({ key, domEvent }) => {
                 const printable = !domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey;
-                if (domEvent.keyCode === 13) { // Enter
+                if (domEvent.key === 'Enter') {
                     if (currentCommand.trim() !== '') {
                         commandHistory.unshift(currentCommand);
                         historyIndex = -1;
@@ -348,10 +391,28 @@
                        prompt();
                     }
                     currentCommand = '';
-                } else if (domEvent.keyCode === 8) { // Backspace
+                } else if (domEvent.key === 'Backspace') {
                     if (currentCommand.length > 0) {
                         term.write('\b \b');
                         currentCommand = currentCommand.slice(0, -1);
+                    }
+                } else if (domEvent.key === 'ArrowUp') {
+                    if(historyIndex < commandHistory.length - 1) {
+                        historyIndex++;
+                        term.write('\x1b[2K\r'); prompt();
+                        currentCommand = commandHistory[historyIndex];
+                        term.write(currentCommand);
+                    }
+                } else if (domEvent.key === 'ArrowDown') {
+                    if(historyIndex > 0) {
+                        historyIndex--;
+                        term.write('\x1b[2K\r'); prompt();
+                        currentCommand = commandHistory[historyIndex];
+                        term.write(currentCommand);
+                    } else {
+                        historyIndex = -1;
+                        term.write('\x1b[2K\r'); prompt();
+                        currentCommand = '';
                     }
                 } else if (printable) {
                     currentCommand += key;
@@ -360,9 +421,90 @@
             });
         }
         
-        // ... (This would contain the new command executor for xterm)
-        function executeCommand(cmd) { /* A placeholder for the new command logic */ term.writeln(`\x1b[31mExecuting: ${cmd} (logic to be fully implemented)\x1b[0m`); prompt(); }
+        const commands = {
+            help: () => term.writeln('可用命令: ls, cd, cat, pwd, theme, neofetch, clear, exit, sudo'),
+            ls: (args) => {
+                const path = resolvePath(args[0] || currentPath);
+                const node = getVFSNode(path);
+                if(node && node.type === 'dir') {
+                    Object.keys(node.items).forEach(item => {
+                        const itemNode = node.items[item];
+                        if (itemNode.type === 'dir') term.writeln(`\x1b[1;34m${item}/\x1b[0m`);
+                        else term.writeln(item);
+                    });
+                } else {
+                    term.writeln(`ls: cannot access '${args[0] || '.'}': No such file or directory`);
+                }
+            },
+            cd: (args) => {
+                const newPath = resolvePath(args[0] || `/home/${currentUser}`);
+                const node = getVFSNode(newPath);
+                if (node && node.type === 'dir') {
+                    currentPath = newPath;
+                } else {
+                    term.writeln(`cd: ${args[0]}: No such file or directory`);
+                }
+            },
+            cat: (args) => {
+                const path = resolvePath(args[0]);
+                const node = getVFSNode(path);
+                if(path.includes('root_cause.txt') && currentUser !== 'root') {
+                    return term.writeln('cat: permission denied: root_cause.txt. Try `sudo cat`.');
+                }
+                if (node && node.type === 'file') {
+                    term.write(node.content.replace(/\n/g, '\r\n'));
+                } else {
+                    term.writeln(`cat: ${args[0]}: No such file or directory`);
+                }
+            },
+            pwd: () => term.writeln(currentPath),
+            clear: () => term.clear(),
+            exit: () => terminalOverlay.style.display = 'none',
+            sudo: (args) => {
+                const actualCmd = args[0];
+                if(commands[actualCmd]) {
+                    currentUser = 'root';
+                    commands[actualCmd](args.slice(1));
+                    currentUser = 'sre';
+                } else {
+                    term.writeln(`sudo: ${actualCmd}: command not found`);
+                }
+            },
+            theme: (args) => {
+                const theme = args[0];
+                if(theme === 'light' || theme === 'dark') {
+                    document.documentElement.className = theme;
+                    term.options.theme = {
+                         ...term.options.theme,
+                         foreground: theme === 'dark' ? '#E6E6E6' : '#111827',
+                         cursor: theme === 'dark' ? '#E6E6E6' : '#111827',
+                    }
+                    term.writeln(`Theme changed to ${theme}`);
+                } else {
+                    term.writeln(`Usage: theme [light|dark]`);
+                }
+            },
+            neofetch: () => term.writeln(`
+   \x1b[34m___  ____  ______\x1b[0m    sre@mainframe
+  \x1b[34m/ _ \\/ __ \\/ ____/\x1b[0m   ----------------
+ \x1b[34m/ ___/ / / / __/\x1b[0m      OS: Web Browser
+\x1b[34m/_/  /_/ /_/____/\x1b[0m       Host: Personal Digital Space
+                        Kernel: JavaScript (V8)
+                        Uptime: forever
+                        Shell: web-cli 2.0
+                        Theme: ${document.documentElement.className}
+            `),
+        };
 
+        function executeCommand(cmd) {
+            const [command, ...args] = cmd.trim().split(/\s+/);
+            if(commands[command]) {
+                commands[command](args);
+            } else {
+                term.writeln(`Command not found: ${command}. Type 'help' for a list of commands.`);
+            }
+            prompt();
+        }
         
         // --- Init & Event Listeners ---
         document.addEventListener('DOMContentLoaded', () => {
