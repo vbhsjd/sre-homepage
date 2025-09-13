@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRE的数字空间</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;700&display=swap');
+        
+        :root { --glow-color: #00f0ff; }
+        body { font-family: 'Source Code Pro', monospace; margin: 0; padding: 0; overflow: hidden; background-color: #010419; color: #E6E6E6; }
+        #bg-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; }
+        .content-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+
+        /* Terminal Window */
+        .terminal-window { width: 90%; max-width: 800px; height: 70vh; max-height: 700px; background: rgba(10, 25, 47, 0.85); backdrop-filter: blur(10px); border-radius: 8px; border: 1px solid rgba(0, 240, 255, 0.3); box-shadow: 0 0 25px rgba(0, 240, 255, 0.2); display: flex; flex-direction: column; overflow: hidden; resize: both; }
+        .terminal-header { background: #1a2a44; padding: 8px 12px; display: flex; align-items: center; border-bottom: 1px solid rgba(0, 240, 255, 0.3); cursor: move; }
+        .header-buttons span { display: block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }
+        .header-buttons .close { background-color: #ff5f56; }
+        .header-buttons .minimize { background-color: #ffbd2e; }
+        .header-buttons .maximize { background-color: #27c93f; }
+        .terminal-title { color: #E6E6E6; text-align: center; flex-grow: 1; font-weight: bold; }
+        .terminal-body { flex-grow: 1; padding: 1rem; overflow-y: auto; font-size: 1rem; line-height: 1.6; color: #c3e88d; }
+        .terminal-body::-webkit-scrollbar { width: 8px; }
+        .terminal-body::-webkit-scrollbar-track { background: #1a2a44; }
+        .terminal-body::-webkit-scrollbar-thumb { background-color: var(--glow-color); border-radius: 4px; }
+        .prompt { color: #82aaff; }
+        .prompt-user { color: #f07178; }
+        .command { color: #E6E6E6; }
+        .output-text, .output-error, .output-info, .output-file { color: #E6E6E6; }
+        .output-error { color: #ff5f56; }
+        .output-info { color: #89ddff; }
+        .output-file { color: #c3e88d; cursor: pointer; text-decoration: underline; }
+        .output-file:hover { color: var(--glow-color); }
+        .cursor { display: inline-block; background-color: #c3e88d; width: 10px; height: 1.2em; animation: blink 1s step-end infinite; vertical-align: middle; }
+        @keyframes blink { from, to { background-color: transparent; } 50% { background-color: #c3e88d; } }
+
+        /* GUI Modal */
+        .gui-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; display: none; justify-content: center; align-items: center; }
+        .gui-window { width: 90%; max-width: 700px; height: 80vh; max-height: 700px; background: #0a192f; border: 1px solid var(--glow-color); border-radius: 8px; box-shadow: 0 0 40px rgba(0, 240, 255, 0.3); display: flex; flex-direction: column; }
+        .gui-header { padding: 1rem; font-size: 1.5rem; font-weight: bold; border-bottom: 1px solid var(--glow-color); }
+        .gui-body { flex-grow: 1; display: flex; }
+        .gui-sidebar { width: 200px; border-right: 1px solid var(--glow-color); padding: 1rem; overflow-y: auto; }
+        .gui-sidebar a { display: block; padding: 0.5rem; border-radius: 4px; margin-bottom: 0.5rem; cursor: pointer; transition: background 0.2s; }
+        .gui-sidebar a:hover, .gui-sidebar a.active { background: rgba(0, 240, 255, 0.2); }
+        .gui-content { flex-grow: 1; padding: 2rem; overflow-y: auto; line-height: 1.8; }
+        .gui-content h1 { font-size: 2rem; color: var(--glow-color); margin-bottom: 1rem; }
+        .gui-content h2 { font-size: 1rem; color: #8892b0; margin-bottom: 2rem; border-bottom: 1px solid #303C55; padding-bottom: 1rem; }
+        .gui-close-btn { position: absolute; top: 1rem; right: 1rem; cursor: pointer; font-size: 1.5rem; color: #8892b0; transition: color 0.2s; }
+        .gui-close-btn:hover { color: var(--glow-color); }
+
+        #gui-toggle-btn {
+            background: none;
+            border: none;
+            color: #8892b0;
+            cursor: pointer;
+            padding: 0;
+            margin-left: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s ease;
+        }
+        #gui-toggle-btn:hover { color: var(--glow-color); }
+        #gui-toggle-btn svg { width: 18px; height: 18px; }
+    </style>
+</head>
+<body>
+    <canvas id="bg-canvas"></canvas>
+    <div class="content-overlay">
+        <div class="terminal-window" id="terminal-window">
+            <div class="terminal-header" id="terminal-header">
+                <div class="header-buttons"><span class="close"></span><span class="minimize"></span><span class="maximize"></span></div>
+                <div class="terminal-title">sre@mainframe: /home</div>
+                <button id="gui-toggle-btn" title="切换到GUI模式">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                </button>
+            </div>
+            <div class="terminal-body" id="terminal-body" onclick="document.getElementById('hidden-input').focus()">
+                <div id="output-container"></div>
+                <div class="input-line">
+                    <span class="prompt"><span class="prompt-user">sre@mainframe</span>:~$ </span>
+                    <span id="input-span" class="command"></span>
+                    <span class="cursor"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <input type="text" id="hidden-input" style="position: absolute; top: -9999px; left: -9999px; opacity: 0; pointer-events: none;">
+
+    <!-- GUI Modal -->
+    <div class="gui-modal" id="gui-modal">
+        <div class="gui-window">
+            <div class="gui-header">
+                文件浏览器
+                <span class="gui-close-btn" id="gui-close-btn">&times;</span>
+            </div>
+            <div class="gui-body">
+                <div class="gui-sidebar" id="gui-sidebar"></div>
+                <div class="gui-content" id="gui-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        // --- (3D背景代码与之前版本相同，此处为节约空间省略) ---
+        const scene = new THREE.Scene(); scene.fog = new THREE.FogExp2(0x010419, 0.1); const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); camera.position.z = 20; const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('bg-canvas'), antialias: true, }); renderer.setSize(window.innerWidth, window.innerHeight); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); const cubes = []; const cubeGeometry = new THREE.BoxGeometry(1, 1, 1); const cubeMaterial = new THREE.MeshLambertMaterial({ color: 0x00f0ff, emissive: 0x00f0ff, emissiveIntensity: 0.5 }); for (let i = 0; i < 50; i++) { const cube = new THREE.Mesh(cubeGeometry, cubeMaterial); cube.position.set((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50); cube.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI); const scale = Math.random() * 0.5 + 0.2; cube.scale.set(scale, scale, scale); cubes.push(cube); scene.add(cube); } const ambientLight = new THREE.AmbientLight(0xffffff, 0.1); scene.add(ambientLight); const directionalLight = new THREE.DirectionalLight(0x00f0ff, 1); directionalLight.position.set(1, 1, 1); scene.add(directionalLight); const clock = new THREE.Clock(); const animate = () => { cubes.forEach(c => { c.rotation.x += 0.005; c.rotation.y += 0.005; c.position.y -= 0.02; if(c.position.y < -25) c.position.y = 25; }); renderer.render(scene, camera); requestAnimationFrame(animate); }; animate(); window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); });
+
+        // --- Mock Filesystem and Posts ---
+        const posts = [
+            { filename: 'ha_architecture.md', title: '关于高可用架构的沉思', date: '2025-09-13', content: `这篇文章记录了我最近关于构建一个真正意义上“永不宕机”系统的思考。我们讨论的不是99.99%，而是无限趋近于100%的可能性。<br><br>### 关键原则：<br>1.  **冗余，但不是简单的复制**: 跨地域、跨云厂商的冗余是基础。<br>2.  **混沌工程常态化**: 主动注入故障，让系统在混乱中变得更强大。<br>3.  **可观测性是基石**: 你无法修复你看不到的东西。Metrics, Tracing, Logging 缺一不可。` },
+            { filename: 'k8s_pitfalls.md', title: '新手易踩的五个K8s大坑', date: '2025-08-22', content: `Kubernetes功能强大，但也同样复杂。这里总结了五个新手最容易遇到的问题，希望能帮助大家少走弯路。<br><br>1. **资源限制（Limits/Requests）设置不当**<br>2. **探针（Probe）配置过于激进**<br>3. **对网络策略（Network Policy）的忽视**<br>4. **滥用latest标签**<br>5. **日志管理混乱**` },
+            { filename: 'root_cause.txt', title: '一次线上事故的复盘报告', date: '2025-07-16', content: `这是一份受保护的报告，需要root权限才能查看。` },
+        ];
+
+        // --- Terminal Elements and State ---
+        const outputContainer = document.getElementById('output-container');
+        const hiddenInput = document.getElementById('hidden-input');
+        const inputSpan = document.getElementById('input-span');
+        const terminalBody = document.getElementById('terminal-body');
+        let commandHistory = [];
+        let historyIndex = -1;
+
+        // --- Command Interpreter ---
+        const commands = {
+            help: () => `
+                <span class="output-info">可用命令:</span><br>
+                - <span class="command">help</span>: 显示此帮助信息<br>
+                - <span class="command">ls</span>: 列出当前目录下的文章<br>
+                - <span class="command">cat [文件名]</span>: 查看文章内容<br>
+                - <span class="command">gui</span>: 打开图形化文件浏览器<br>
+                - <span class="command">clear</span>: 清空屏幕
+            `,
+            ls: () => posts.map(p => `<span class="output-file" onclick="executeCommand('cat ${p.filename}')">${p.filename}</span>`).join('<br>'),
+            cat: (args) => {
+                const filename = args[0];
+                if (!filename) return `<span class="output-error">错误: 请指定文件名。用法: cat [文件名]</span>`;
+                if (filename === 'root_cause.txt') return `<span class="output-error">权限不足: 无法访问 ${filename}</span>`;
+                const post = posts.find(p => p.filename === filename);
+                if (!post) return `<span class="output-error">错误: 文件未找到: ${filename}</span>`;
+                return `<br><div class="output-text"><h1>${post.title}</h1><h2>${post.date}</h2><div>${post.content}</div></div><br>`;
+            },
+            gui: () => {
+                openGui();
+                return `<span class="output-info">正在启动图形化界面...</span>`;
+            },
+            clear: () => {
+                outputContainer.innerHTML = '';
+                return '';
+            }
+        };
+
+        function executeCommand(cmd) {
+            printLine(`<span class="prompt"><span class="prompt-user">sre@mainframe</span>:~$ </span><span class="command">${cmd}</span>`);
+            const [command, ...args] = cmd.trim().split(' ');
+            const handler = commands[command];
+            const output = handler ? handler(args) : `<span class="output-error">命令未找到: ${command}。输入 'help' 查看可用命令。</span>`;
+            if (output) printLine(output);
+        }
+
+        // --- Input Handling ---
+        hiddenInput.addEventListener('input', (e) => {
+            inputSpan.textContent = e.target.value;
+        });
+
+        hiddenInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && hiddenInput.value.trim() !== '') {
+                const cmd = hiddenInput.value;
+                commandHistory.unshift(cmd);
+                historyIndex = -1;
+                executeCommand(cmd);
+                hiddenInput.value = '';
+                inputSpan.textContent = '';
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (historyIndex < commandHistory.length - 1) {
+                    historyIndex++;
+                    hiddenInput.value = commandHistory[historyIndex];
+                    inputSpan.textContent = hiddenInput.value;
+                }
+            } else if (e.key === 'ArrowDown') {
+                 e.preventDefault();
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    hiddenInput.value = commandHistory[historyIndex];
+                    inputSpan.textContent = hiddenInput.value;
+                } else {
+                    historyIndex = -1;
+                    hiddenInput.value = '';
+                    inputSpan.textContent = '';
+                }
+            }
+        });
+
+        function printLine(html) {
+            outputContainer.innerHTML += `<div>${html}</div>`;
+            terminalBody.scrollTop = terminalBody.scrollHeight;
+        }
+        
+        // --- GUI Modal Logic ---
+        const guiModal = document.getElementById('gui-modal');
+        const guiSidebar = document.getElementById('gui-sidebar');
+        const guiContent = document.getElementById('gui-content');
+        
+        function openGui() {
+            guiSidebar.innerHTML = '';
+            posts.forEach((post, index) => {
+                const a = document.createElement('a');
+                a.textContent = post.title;
+                a.onclick = () => {
+                    displayGuiContent(post);
+                    document.querySelectorAll('.gui-sidebar a').forEach(el => el.classList.remove('active'));
+                    a.classList.add('active');
+                };
+                guiSidebar.appendChild(a);
+                if(index === 0) a.click(); // Select first item by default
+            });
+            guiModal.style.display = 'flex';
+        }
+
+        function displayGuiContent(post) {
+            if (post.filename === 'root_cause.txt') {
+                 guiContent.innerHTML = `<h1>访问被拒绝</h1><h2>权限不足</h2><div>此文件包含敏感信息，无法在GUI模式下查看。</div>`;
+                 return;
+            }
+            guiContent.innerHTML = `<h1>${post.title}</h1><h2>${post.date}</h2><div>${post.content}</div>`;
+        }
+
+        document.getElementById('gui-close-btn').onclick = () => {
+            guiModal.style.display = 'none';
+        };
+
+        // --- Startup Sequence ---
+        const bootSequence = ['System boot initiated...', 'Loading SRE modules...', 'Connecting to mainframe...', 'STATUS: All systems nominal.', '<br>', `欢迎来到SRE的数字空间。输入 <span class="command">'help'</span> 开始。`];
+        let bootIndex = 0;
+        function runBoot() {
+            if (bootIndex < bootSequence.length) {
+                printLine(bootSequence[bootIndex]);
+                bootIndex++;
+                setTimeout(runBoot, Math.random() * 200 + 50);
+            } else {
+                document.getElementById('hidden-input').focus();
+            }
+        }
+        runBoot();
+
+        // Make terminal draggable
+        const terminalWindow = document.getElementById('terminal-window');
+        const terminalHeader = document.getElementById('terminal-header');
+        let isDragging = false, offsetX, offsetY;
+        terminalHeader.onmousedown = (e) => {
+            isDragging = true;
+            offsetX = e.clientX - terminalWindow.offsetLeft;
+            offsetY = e.clientY - terminalWindow.offsetTop;
+        };
+        document.onmousemove = (e) => {
+            if(isDragging) {
+                terminalWindow.style.left = `${e.clientX - offsetX}px`;
+                terminalWindow.style.top = `${e.clientY - offsetY}px`;
+            }
+        };
+        document.onmouseup = () => { isDragging = false; };
+        
+        document.getElementById('gui-toggle-btn').onclick = openGui;
+
+        window.executeCommand = executeCommand; // Make it globally accessible for onclick
+    </script>
+</body>
+</html>
+
